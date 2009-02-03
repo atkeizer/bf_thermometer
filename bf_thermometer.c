@@ -78,14 +78,13 @@ int main(void)
 
 unsigned char scan_1w_rom() {
 
-   unsigned char byte, byte_bit, bit, branch, i, o, n=0, branches[MAX_1W];
+   unsigned char byte, byte_bit, bit, branch=0, i, o, n=0, branches[MAX_1W];
 
    do {
        ow_reset();
        ow_byte_wr( OW_SEARCH_ROM );
        o=1;  // offset
        bit = 0;
-       branch=0;
        do {
           byte =  7 - bit/8;
           byte_bit = (bit & 7);
@@ -105,16 +104,19 @@ unsigned char scan_1w_rom() {
                 printf("0");
              }   
              else                   // both 1 and 0 in this bit position 
-             if ( branches[n] != bit ) { // branch at this position already explored
+             {     
                 if (  romcodes[n][byte] & ( 1 << byte_bit ) ) { // if bit was already set then continue
                                         // with the 1's branch, 0 branch was done in a previous iteration
                    printf("continueing with 1 branch, decreasing branch counter\n");
-                   branches[n]=bit;
                    ow_bit_io( 1 ); 
                    printf("1");
-                   branch--;
+                   if ( branches[n] == bit ) branch--;
                 }
+                else 
+                if ( branches[n] == bit )         // branch at this position already explored
+                   printf("branch already explored\n"); 
                 else {
+                   branches[n] = bit;
                    printf("cloning romcode continuing 0 branch, increasing branch counter\n");
                    branch++;
                    for ( i=byte ; i > 0 ; i-- )   // clone the rom id so far obtained
