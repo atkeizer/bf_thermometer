@@ -18,25 +18,26 @@
 
 #define MAX_1W 5
 
-void main(void) __attribute__((noreturn));
+//void main(void) __attribute__((noreturn));
 void init(void);
 void OSCCAL_calibration(void);
 void ADC_init(char);
 int ADC_read(char);
 void write_temp(char);
 
-char rom_btree_scan( unsigned char bit, char direction, char *rom, unsigned char depth );
-void conv_ds18s20( char* );
-char read_ds18s20( char*, char*, unsigned char* );
+unsigned char scan_1w_rom();
+void conv_ds18s20( unsigned char* );
+char read_ds18s20( unsigned char*, char*, unsigned char* );
 char search_ds18s20(void);
+
+unsigned char romcodes[MAX_1W][8];
 
 static FILE mystdout = FDEV_SETUP_STREAM(putc_usart, NULL, _FDEV_SETUP_WRITE);
 
 
-void main(void)
+int main(void)
 {    
-    unsigned char i ,n, found, bit, dir, result, th;
-    unsigned char romcodes[MAX_1W][8], branches[MAX_1W];
+    unsigned char n, i, j, r, th;
     char tc;
 
     stdout = &mystdout;
@@ -51,66 +52,85 @@ void main(void)
 
     while (1)
     {
-       n=0;
-       bit=63;
-       dir=0;
-       do {          // first follow the 0 branches and store the bit position of each branche
-          result = rom_btree_scan( &bit, &dir, romcodes[n] );
-          if ( result == 2 ) {
-             branches[n] = bit;
-             for ( i=0 ; i < 8 ; i++ )   //copy the current romcode to the next
-                romcodes[n][i] = romcodes[n+1][i];
-             result = rom_btree_scan( &bit, &dir, romcodes[n] );
-             
-             
-             
-          printf("Return value %i, bit %i, dir %i, ROM code ", result, bit, dir);
-          for ( i=0 ; i < 8 ; i++ ) {
-             printf("%02X", romcodes[n][i]);
-          }
-          printf("\n");
-
-       } while ( ++n < MAX_1W && result == 2 ) ;
-
-       read_ds18s20(  romcodes[n], &tc, &th );
-       printf("Temp = %i,%i C\n", tc, th);
+       for ( i=0 ; i < MAX_1W ; i++ ) 
+          for ( j=0 ; j < 8 ; j++ ) 
+             romcodes[i][j] = 0;
+       printf("romcodes initialized\n");
+       for ( i=0 ; i < 64 ; i++ )  printf("*");
+       printf("\n");
+       if ( (n=scan_1w_rom()) ) {
+          printf("%i devices found on 1-wire bus\n", n);
+       }
+       else {
+          printf("No devices found on 1-wire bus\n");
+       }
+       for ( i=0 ; i < n ; i++ ) {
+          for ( r=0 ; r < 8 ; r++ ) 
+             printf("%02X",romcodes[i][r]);
+          read_ds18s20( romcodes[i], &tc, &th );
+          printf("\nTemp = %i,%i C\n", tc, th);
+       }
+        printf("\n");
        _delay_ms(3000);
     }    
 }
 
 
+unsigned char scan_1w_rom() {
 
-char rom_btree_scan( unsigned char *lastbit, unsigned char *direction, char *rom )
-{
-    unsigned char bit_val, complement, byte, byte_bit, directioni, bit=63;
+   unsigned char byte, byte_bit, bit, branch, i, o, n=0, branches[MAX_1W];
 
-    ow_reset();
-    ow_byte_wr( OW_SEARCH_ROM );
-
-    do {
-       byte = bit/8;
-       byte_bit = (bit & 7) + 1;
-       if ( ow_bit_io( 1 ) ) {     // first bit is 1
-          if ( ow_bit_io( 1 ) )    // second bit is one, no devices participating in serch
-             return 0xFF;
-          else {                   // second bit is 0, only devices with 1 in this bit position
-             rom[byte] |= ( 1 << byte_bit );
-             ow_bit_io( 1 );
+   do {
+       ow_reset();
+       ow_byte_wr( OW_SEARCH_ROM );
+       o=1;  // offset
+       bit = 0;
+       branch=0;
+       do {
+          byte =  7 - bit/8;
+          byte_bit = (bit & 7);
+          if ( ow_bit_io( 1 ) ) {     // if first bit is 1
+             if ( ow_bit_io( 1 ) )    // and second bit is one, no devices participating in search
+                return 0;
+             else {                   // or second bit is 0, only devices with 1 in this bit position
+                romcodes[n][byte] |= ( 1 << byte_bit );
+                ow_bit_io( 1 );
+                printf("1");
+             }
           }
-       }
-       else {                      // first bit is 0
-          if ( ow_bit_io( 1 ) ) {  // second bit is 1, only devices with 0 in this bit position
-             rom[byte] &= ~( 1 << byte_bit );
-             ow_bit_io( 0 );
-          {   
-          else                     // both 1 and 0 in this bit position
-             return = 2;              
-       }      
-    } while( bit-- )
-    return 0;
+          else {                      // first bit is 0
+             if ( ow_bit_io( 1 ) ) {  // and second bit is 1, only devices with 0 in this bit position
+                romcodes[n][byte] &= ~( 1 << byte_bit );
+                ow_bit_io( 0 );
+                printf("0");
+             }   
+             else                   // both 1 and 0 in this bit position 
+             if ( branches[n] != bit ) { // branch at this position already explored
+                if (  romcodes[n][byte] & ( 1 << byte_bit ) ) { // if bit was already set then continue
+                                        // with the 1's branch, 0 branch was done in a previous iteration
+                   printf("continueing with 1 branch, decreasing branch counter\n");
+                   branches[n]=bit;
+                   ow_bit_io( 1 ); 
+                   printf("1");
+                   branch--;
+                }
+                else {
+                   printf("cloning romcode continuing 0 branch, increasing branch counter\n");
+                   branch++;
+                   for ( i=byte ; i > 0 ; i-- )   // clone the rom id so far obtained
+                      romcodes[n+branch][i] = romcodes[n][i];
+                   romcodes[n+branch][byte] |= ( 1 << byte_bit );
+                   romcodes[n][byte] &= ~( 1 << byte_bit ); // continue with 0 branch
+                   ow_bit_io( 0 );
+                   printf("0");
+                }
+             }
+          }      
+       } while ( bit++ < 63 ) ;
+       printf("\n");
+    } while ( ( ++n < MAX_1W ) &&  branch ) ;
+    return n;
 }
-
-
 
 
 
@@ -255,17 +275,17 @@ int ADC_read(char channel)
 //}
 
 
-void conv_ds18s20( char *id )
+void conv_ds18s20( unsigned char *id )
 {
-   ow_command( 0x44, *id );
+   ow_command( 0x44, id );
 }
 
 
-char read_ds18s20( char *id, char *deg, unsigned char *hundreds )
+char read_ds18s20( unsigned char *id, char *deg, unsigned char *hundreds )
 {
    unsigned char i, scratch[9];
 
-   ow_command(0xBE, *id);  // Read scratchpad
+   ow_command(0xBE, id);  // Read scratchpad
    for ( i=0 ; i<9 ; i++ ) { 
        scratch[i]=ow_byte_rd();
    }
