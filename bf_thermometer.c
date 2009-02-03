@@ -16,7 +16,7 @@
 #include "delay.h"
 
 
-#define MAX_DS18S20 5
+#define MAX_1W 5
 
 void main(void) __attribute__((noreturn));
 void init(void);
@@ -25,18 +25,18 @@ void ADC_init(char);
 int ADC_read(char);
 void write_temp(char);
 
-char rom_btree_scan( unsigned char *bit, char direction, char *rom );
+char rom_btree_scan( unsigned char bit, char direction, char *rom, unsigned char depth );
 void conv_ds18s20( char* );
 char read_ds18s20( char*, char*, unsigned char* );
 char search_ds18s20(void);
 
 static FILE mystdout = FDEV_SETUP_STREAM(putc_usart, NULL, _FDEV_SETUP_WRITE);
 
-unsigned char romcodes[OW_ROMCODE_SIZE][MAX_DS18S20];
 
 void main(void)
 {    
     unsigned char i ,n, found, bit, dir, result, th;
+    unsigned char romcodes[MAX_1W][8], branches[MAX_1W];
     char tc;
 
     stdout = &mystdout;
@@ -44,69 +44,68 @@ void main(void)
     LCD_Init();                 // initialize the LCD
 
     sei();
-    LCD_puts("INITIALIZING");
+    LCD_puts("INIT");
     init();           
     LCD_puts("INIT COMPLETE");
     printf("\n\nINIT COMPLETE\n\n");
+
+    ow_reset();
+    ow_byte_wr( OW_SEARCH_ROM );
     while (1)
     {
-	   //found = search_ds18s20();
-       //printf("Searched for DS18S20, %i found\n\n", found);
-       //for (  n=0 ; n < 5 ; n++ ) {
-          //printf("%i = ",n);
-
-          n=0;
-          bit=64;
-          dir=0;
-
-          result = rom_btree_scan( &bit, dir, romcodes[n] );
-
+       n=0;
+       bit=63;
+       dir=0;
+       do {          // first follow the 0 branches and store the bit position of each branche
+          result = rom_btree_scan( &bit, &dir, romcodes[n] );
+          if ( result == 2 ) {
+             branches[n] = bit;
+             for ( i=0 ; i < 8 ; i++ )   //copy the current romcode to the next
+                romcodes[n][i] = romcodes[n+1][i];
+             result = rom_btree_scan( &bit, &dir, romcodes[n] );
+             
+             
+             
           printf("Return value %i, bit %i, dir %i, ROM code ", result, bit, dir);
           for ( i=0 ; i < 8 ; i++ ) {
-              printf("%02X", romcodes[n][i]);
-              
+             printf("%02X", romcodes[n][i]);
           }
           printf("\n");
-          read_ds18s20(  romcodes[n], &tc, &th );
-          printf("Temp = %i,%i C\n", tc, th);
-       //}
-	   //printf("\n");
+
+       } while ( ++n < MAX_1W ) ;
+
+       read_ds18s20(  romcodes[n], &tc, &th );
+       printf("Temp = %i,%i C\n", tc, th);
        _delay_ms(3000);
     }    
 }
 
 
-char rom_btree_scan( unsigned char *bit, char direction, char *rom )
+
+char rom_btree_scan( unsigned char *bit, unsigned char *direction, char *rom )
 {
-    unsigned char bit_val, complement, byte, byte_bit;
+    unsigned char bit_val, complement, byte, byte_bit, direction;
 
-    if( ow_reset() ) return OW_PRESENCE_ERR;    // error, no device found
-
-    ow_byte_wr( OW_SEARCH_ROM );            // ROM search command
-    while( *bit ) {
-         --*bit; 
-         byte = *bit/8;
-         byte_bit = (*bit & 7) + 1;
-         bit_val=ow_bit_io( 1 );           // read bit
-         complement=ow_bit_io( 1 );        // complemetnt
-         if( bit_val && complement ) {         // no devices participating in serch
-             return 1;
-         }
-         if( bit_val && !complement ) {        // only devices with 1 in this bit position
-            rom[byte] |= ( 1 << byte_bit );
-         }
-         if( !bit_val && complement ) {        // only devices with 0 in this bit position
-            rom[byte] &= ~( 1 << byte_bit );
-         }
-         if( !bit_val && !complement ) {       // both 1 and 0 in this bit position
-            if ( direction ) rom[byte] |= ( 1 << byte_bit );
-            else rom[byte] &= ~( 1 << byte_bit );
-            return 2;
-         }
-         ow_bit_io( bit_val );
-         printf("%i", bit_val);
-    }
-    printf("\n");
+    do {
+       byte = bit/8;
+       byte_bit = (bit & 7) + 1;
+       if ( ow_bit_io( 1 ) ) {     // first bit is 1
+          if ( ow_bit_io( 1 ) )    // second bit is one, no devices participating in serch
+             return 0xFF;
+          else {                   // second bit is 0, only devices with 1 in this bit position
+             rom[byte] |= ( 1 << byte_bit );
+             ow_bit_io( 1 );
+          }
+       }
+       else {                      // first bit is 0
+          if ( ow_bit_io( 1 ) ) {  // second bit is 1, only devices with 0 in this bit position
+             rom[byte] &= ~( 1 << byte_bit );
+             ow_bit_io( 0 );
+          {   
+          else                     // both 1 and 0 in this bit position
+             return = 2;              
+       }      
+    } while( bit-- )
     return 0;
 }
 
