@@ -49,8 +49,6 @@ void main(void)
     LCD_puts("INIT COMPLETE");
     printf("\n\nINIT COMPLETE\n\n");
 
-    ow_reset();
-    ow_byte_wr( OW_SEARCH_ROM );
     while (1)
     {
        n=0;
@@ -72,7 +70,7 @@ void main(void)
           }
           printf("\n");
 
-       } while ( ++n < MAX_1W ) ;
+       } while ( ++n < MAX_1W && result == 2 ) ;
 
        read_ds18s20(  romcodes[n], &tc, &th );
        printf("Temp = %i,%i C\n", tc, th);
@@ -82,9 +80,12 @@ void main(void)
 
 
 
-char rom_btree_scan( unsigned char *bit, unsigned char *direction, char *rom )
+char rom_btree_scan( unsigned char *lastbit, unsigned char *direction, char *rom )
 {
-    unsigned char bit_val, complement, byte, byte_bit, direction;
+    unsigned char bit_val, complement, byte, byte_bit, directioni, bit=63;
+
+    ow_reset();
+    ow_byte_wr( OW_SEARCH_ROM );
 
     do {
        byte = bit/8;
